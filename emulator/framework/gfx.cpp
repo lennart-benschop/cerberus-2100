@@ -70,7 +70,7 @@ void GFXStart(int autoStart) {
 
 	while(isRunning) {																// While still running.
 		while (SDL_PollEvent(&event)) {												// While events in event queue.
-			if (event.type == SDL_KEYDOWN && event.key.keysym.sym == SDLK_ESCAPE) 	// Exit if ESC pressed.
+			if (event.type == SDL_KEYDOWN && event.key.keysym.sym == SDLK_F10) 	// Exit if ESC pressed.
 																			isRunning = 0;
 			if (event.type == SDL_KEYDOWN || event.type == SDL_KEYUP)				// Handle other keys.
 						_GFXUpdateKeyRecord(event.key.keysym.sym,event.type == SDL_KEYDOWN);
@@ -226,7 +226,7 @@ int _GFXS(void)  { return gridInfo.w; }
 // *******************************************************************************************************************************
 
 static int keyTable[] = {
-	GFXKEY_UP,SDLK_UP, GFXKEY_DOWN,SDLK_DOWN, GFXKEY_LEFT,SDLK_LEFT, GFXKEY_RIGHT,SDLK_RIGHT,
+       GFXKEY_UP,SDLK_UP, GFXKEY_DOWN,SDLK_DOWN, GFXKEY_LEFT,SDLK_LEFT, GFXKEY_RIGHT,SDLK_RIGHT, GFXKEY_ESCAPE, SDLK_ESCAPE,
 	GFXKEY_RETURN,SDLK_RETURN,GFXKEY_BACKSPACE,SDLK_BACKSPACE,GFXKEY_TAB,SDLK_TAB,GFXKEY_DELETE,SDLK_DELETE,
 	GFXKEY_LSHIFT,SDLK_LSHIFT,GFXKEY_RSHIFT,SDLK_RSHIFT,GFXKEY_SHIFT,-1,GFXKEY_CONTROL,SDLK_LCTRL,	
 	GFXKEY_PAGEUP,SDLK_PAGEUP,GFXKEY_PAGEDOWN,SDLK_PAGEDOWN,
@@ -241,8 +241,8 @@ static int keyTable[] = {
 
 	'0',SDLK_0, '1',SDLK_1, '2',SDLK_2, '3',SDLK_3, '4',SDLK_4, '5',SDLK_5, '6',SDLK_6, '7',SDLK_7, '8',SDLK_8, '9',SDLK_9,
 
-	'-',SDLK_MINUS,'\\',SDLK_BACKSLASH,'@',SDLK_QUOTE,'[',SDLK_LEFTBRACKET,']',SDLK_RIGHTBRACKET,';',SDLK_SEMICOLON,':',SDLK_COLON,
-	'.',SDLK_PERIOD,',',SDLK_COMMA,'/',SDLK_SLASH,'#',SDLK_HASH,'=',SDLK_EQUALS,' ',SDLK_SPACE,
+	'-',SDLK_MINUS,'\\',SDLK_BACKSLASH,'\'',SDLK_QUOTE,'[',SDLK_LEFTBRACKET,']',SDLK_RIGHTBRACKET,';',SDLK_SEMICOLON,':',SDLK_COLON,
+	'.',SDLK_PERIOD,',',SDLK_COMMA,'/',SDLK_SLASH,'#',SDLK_HASH,'=',SDLK_EQUALS,' ',SDLK_SPACE, '`', SDLK_BACKQUOTE,
 
 -1 };
 
@@ -300,21 +300,29 @@ int  GFXIsKeyPressed(int character) {
 
 int  GFXToASCII(int ch,int applyModifiers) {
 	if (ch >= ' ' && ch < 127) {													// Legitimate key.
-		ch = tolower(ch);
-		if (ch == '@') ch = '\'';													// @ is actually '
-		if (applyModifiers != 0) {
+	  ch = tolower(ch);
+	  if (ch == '@') ch = '\'';													// @ is actually '
+	  if (applyModifiers != 0) {
 			if (GFXIsKeyPressed(GFXKEY_SHIFT)) {
 				switch(ch) {
-					case '\'':	ch = '@';break;
+  				        case '`':       ch = '~';break;
+					case '\\':	ch = '|';break;
+					case '\'':	ch = '\"';break;
 					case '-':	ch = '_';break;
 					case '#':	ch = '~';break;
 					case '=':	ch = '+';break;
+					case '1':	ch = '!';break;
+					case '2':	ch = '@';break;
+					case '3':	ch = '#';break;
+					case '4':	ch = '$';break;
+					case '5':	ch = '%';break;
 					case ';':	ch = ':';break;
 					case '6':	ch = '^';break;
 					case '7':	ch = '&';break;
 					case '8':	ch = '*';break;
 					case '9':	ch = '(';break;
 					case '0':	ch = ')';break;
+        				case ' ':       break;
 					default:	ch = ch ^ ((ch < 64) ? 0x10:0x20);break;
 				}
 			}
@@ -325,8 +333,18 @@ int  GFXToASCII(int ch,int applyModifiers) {
 		switch (ch) {																// Control characters
 			case GFXKEY_TAB:		ch = 0x09;break;								// Handle TAB, Backspace and CR.
 			case GFXKEY_RETURN:		ch = 0x0D;break;
-			case GFXKEY_BACKSPACE:	ch = 0x08;break;
-			default:				ch = 0x00;break;
+			case GFXKEY_BACKSPACE:	        ch = 0x7f;break;
+			case GFXKEY_DELETE:	        ch = 0x7f;break;
+			case GFXKEY_INSERT:	        ch = 0x2;break;
+			case GFXKEY_ESCAPE:	        ch = 0x1b;break;
+			case GFXKEY_LEFT:	        ch = 0x08;break;
+			case GFXKEY_RIGHT:	        ch = 0x15;break;
+		        case GFXKEY_UP:	                ch = 0x0b;break;
+			case GFXKEY_DOWN:	        ch = 0x0a;break;
+			case GFXKEY_PAGEUP:	        ch = 0x19;break;
+			case GFXKEY_PAGEDOWN:	        ch = 0x1a;break;
+			case GFXKEY_F12:	        ch = 0x01;break;
+			default:			ch = 0x00;break;
 		}
 	}
 	return ch;
@@ -348,7 +366,7 @@ int  GFXTimer(void) {
 //
 // *******************************************************************************************************************************
 
-const int AMPLITUDE = 28000;
+const int AMPLITUDE = 1000;
 const int FREQUENCY = 44100;
 
 void audio_callback(void*, Uint8*, int);

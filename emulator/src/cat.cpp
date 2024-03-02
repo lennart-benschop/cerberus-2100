@@ -29,7 +29,7 @@ static void catbios_sync();
 void CatSetup(int argc,char **argv) {
 	pendingKey = 0;
 
-	mode = true;
+	mode = false;
 	cpurunning = (argc == 3);
 	fast = true;
 	

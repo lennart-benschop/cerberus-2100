@@ -216,7 +216,7 @@ void CPUWriteMemory(WORD16 address,BYTE8 data) {
 void CPULoadBinary(char *fileName) {
 	FILE *f = fopen(fileName,"rb");
 	if (f != NULL) {
-		int n = fread(ramMemory+0x202,1,RAMSIZE-0x202,f);
+		int n = fread(ramMemory+0x205,1,RAMSIZE-0x205,f);
 		fclose(f);
 	}
 	forceRun = -1;
@@ -229,7 +229,7 @@ void CPULoadBinary(char *fileName) {
 void CPUInterrupt(void) {
 	if (CPUIsZ80()) {
 		if (READ8(PC) == 0x76) PC++;
-		ZPUSH(PC);PC = 0x38;
+		ZPUSH(PC);PC = 0x66;
 	} else {
 		if (READ8(PC) == 0xCB) PC++;
 		nmiCode();

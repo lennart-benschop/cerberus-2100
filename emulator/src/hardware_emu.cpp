@@ -56,44 +56,93 @@ void HWXSetFrequency(int frequency) {
 //								Load file in
 // ****************************************************************************
 
-WORD16 HWXLoadFile(char * fileName,BYTE8 *target) {
+
+WORD16 HWXLoadFile(char * fileName,BYTE8 *target,unsigned int *bytes_read) {
 	char fullName[128];
+        char *p=fullName;
 	if (fileName[0] == 0) return 1;
 	MKSTORAGE();
 	sprintf(fullName,"%sstorage%c%s",SDL_GetBasePath(),FILESEP,fileName);
+	// Sometimes the filename passed is delimited by a space instead of 0.
+	while (*p) {
+	  if (*p==' ') {
+	    *p=0;
+	    break;
+	  }
+	  p++;
+	}
+	  
 	FILE *f = fopen(fullName,"rb");
 	int c = 0;
 	if (f != NULL) {
 		while (!feof(f)) {
-			BYTE8 data = fgetc(f);
-			*target++ = data;
+			int data = fgetc(f);
+			if (data != EOF)
+			  *target++ = data;
 			c++;
 		}
 		fclose(f);
 	}
+	if (bytes_read != NULL)
+	  *bytes_read = c;
 	return (f != NULL) ? 0 : 1;
 }
+
+WORD16 HWXDeleteFile(char * fileName) {
+	char fullName[128];
+        char *p=fullName;
+	if (fileName[0] == 0) return 1;
+	MKSTORAGE();
+	sprintf(fullName,"%sstorage%c%s",SDL_GetBasePath(),FILESEP,fileName);
+	// Sometimes the filename passed is delimited by a space instead of 0.
+	while (*p) {
+	  if (*p==' ') {
+	    *p=0;
+	    break;
+	  }
+	  p++;
+	}
+	remove(fullName);
+	return 0;
+};
 
 // ****************************************************************************
 //							  Load Directory In
 // ****************************************************************************
-
-void HWXLoadDirectory(BYTE8 *target) {
-	DIR *dp;
-	struct dirent *ep;
+static DIR *dp;
+void HWXLoadDirectoryStart(void) {
 	char fullName[128];
 	MKSTORAGE();
 	sprintf(fullName,"%sstorage",SDL_GetBasePath());
-	dp = opendir(fullName);
+	dp = opendir(fullName);  
+}
+
+void HWXLoadDirectoryEntry(BYTE8 *target, unsigned int *length) {
+	struct dirent *ep;
+	FILE *f;
+	char fullName[128];
 	if (dp != NULL) {
-		while (ep = readdir(dp)) {
-			if (ep->d_name[0] != '.') {
-				char *p = ep->d_name;
-				while (*p != '\0') *target++ =*p++;
-				*target++ = '\0';
-			}
-		}
-		closedir(dp);
+	retry:	  
+	  if (ep = readdir(dp)) {
+	    if (ep->d_name[0] != '.') {
+	      char *p = ep->d_name;
+	      while (*p != '\0') *target++ =*p++;
+	      *target++ = '\0';
+	      // Open the file for reading just to find out the length.
+	      sprintf(fullName,"%sstorage%c%s",SDL_GetBasePath(),FILESEP,(char*)ep->d_name);
+	      f = fopen(fullName,"rb");
+	      if (f) {
+		fseek(f,0,SEEK_END);
+		*length=ftell(f);
+		fclose(f);
+	      }		      	      
+	    } else {
+	      goto retry;
+	    }
+	  } else {
+	    closedir(dp);
+	    dp = NULL;
+	  }
 	}
 	*target = '\0';
 }
@@ -104,9 +153,18 @@ void HWXLoadDirectory(BYTE8 *target) {
 
 WORD16 HWXSaveFile(char *fileName,BYTE8 *data,WORD16 size) {
 	char fullName[128];
+        char *p=fullName;
 	MKSTORAGE();
 	sprintf(fullName,"%sstorage%c%s",SDL_GetBasePath(),FILESEP,fileName);
-	printf("%s\n",fileName);
+	// Sometimes the filename passed is delimited by a space instead of 0.
+	while (*p) {
+	  if (*p==' ') {
+	    *p=0;
+	    break;
+	  }
+	  p++;
+	}
+	  
 	FILE *f = fopen(fullName,"wb");
 	if (f != NULL) {
 		for (int i = 0;i < size;i++) {

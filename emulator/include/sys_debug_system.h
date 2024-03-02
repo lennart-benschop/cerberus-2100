@@ -16,7 +16,7 @@
 #include "sys_processor.h"
 #include "cat.h"
 
-#define WIN_TITLE 		"Cerberus 2080 Emulator"									// Initial Window stuff
+#define WIN_TITLE 		"Cerberus 2100 Emulator"									// Initial Window stuff
 #define WIN_WIDTH		(34*8*4)
 #define WIN_HEIGHT		(26*8*4)
 #define WIN_BACKCOLOUR	0x004

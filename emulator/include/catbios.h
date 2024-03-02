@@ -18,14 +18,38 @@
 #define byte BYTE8
 
 #define PS2_ENTER       13
-#define PS2_ESC         9                               // Using TAB as we use ESC for exit.
-#define PS2_PAGEUP      (GFXKEY_PAGEUP+1000)
-#define PS2_PAGEDOWN    (GFXKEY_PAGEDOWN+1000)
-#define PS2_UPARROW     (GFXKEY_UP+1000)
-#define PS2_RIGHTARROW  (GFXKEY_RIGHT+1000)
-#define PS2_LEFTARROW   (GFXKEY_LEFT+1000)
-#define PS2_DOWNARROW   (GFXKEY_DOWN+1000)
-#define PS2_DELETE      8
+#define PS2_ESC         27                               // Using TAB as we use ESC for exit.
+#define PS2_PAGEUP      25
+#define PS2_PAGEDOWN    26
+#define PS2_UPARROW     11
+#define PS2_RIGHTARROW  21
+#define PS2_LEFTARROW   8
+#define PS2_DOWNARROW   10
+#define PS2_DELETE      127
+#define PS2_F12         1
+#define PS2_INSERT      2
+
+/* Status constants */
+#define STATUS_DEFAULT 0
+#define STATUS_BOOT 1
+#define STATUS_READY 2
+#define STATUS_UNKNOWN_COMMAND 3
+#define STATUS_NO_FILE 4
+#define STATUS_CANNOT_OPEN 5  
+#define STATUS_MISSING_OPERAND 6
+#define STATUS_SCROLL_PROMPT 7
+#define STATUS_FILE_EXISTS 8
+#define STATUS_ADDRESS_ERROR 9
+#define STATUS_POWER 10
+#define STATUS_EOF 11
+
+
+#define config_enable_nmi 1			// Turn on the 50hz NMI timer when CPU is running. If set to 0 will only trigger an NMI on keypress
+int config_outbox_flag = 0x0200;	// Outbox flag memory location (byte)
+int config_outbox_data = 0x0201;	// Outbox data memory location (byte)
+int config_inbox_flag = 0x202;	// Inbox flag memory location (byte)
+int config_inbox_data = 0x203;	// Inbox data memory location (word)
+int config_code_start = 0x205; // Start location of code
 
 static void enter();
 static char *getNextWord(bool fromTheBeginning);
@@ -45,6 +69,7 @@ static void testMem();
 static void playJingle();
 static void cls();
 static void ccls();
+static void cprintBanner();
 static void cprintFrames();
 static void cprintString(byte x, byte y, char *text);
 static void cprintChar(byte x, byte y, byte token);
@@ -55,6 +80,18 @@ static void help();
 static void updateProcessorState();
 static int strToHex(char *s);
 static void binMove(char *startAddr, char *endAddr, char *destAddr);
+static void cpokeW(unsigned int address, unsigned int data);
+static void cpokeL(unsigned int address, unsigned long data);
+static bool cpokeStr(unsigned int address, char *text);
+static unsigned int cpeekW(unsigned int address);
+static bool cpeekStr(unsigned int address, char * dest, int max);
+static void messageHandler(void);
+void cmdSound(unsigned int address);
+int cmdDelFile(unsigned int address);
+int cmdLoad(unsigned int address);
+int cmdSave(unsigned int address);
+int cmdCatOpen(unsigned int address);
+int cmdCatEntry(unsigned int address);
 
 static const BYTE8 default_font[2048] = {
     #include "_char_data.h"
@@ -64,8 +101,20 @@ static const BYTE8 cerberus_image[] = {
     #include "_img_data.h"
 };
 
-#define delay(a)        {}
-#define tone(PIN,pitch,len) {}
+void delay(unsigned int a)
+{
+  SDL_Delay(a);
+  //unsigned int wait_to = HWXGetSystemClock()+a;
+  //while (HWXGetSystemClock() < wait_to)
+  //  ;
+}
+#define SOUND 0
+void tone(unsigned int PIN,unsigned int pitch,unsigned int len)
+{
+  HWXSetFrequency(pitch);
+  delay(len);
+  HWXSetFrequency(0);
+}
 
 char editLine[40] ;
 char previousEditLine[40];
@@ -92,16 +141,11 @@ static void catbios_setup() {
     cprintFrames();
     clearEditLine();
     strcpy(previousEditLine,editLine);
+    cprintBanner();
 
-    int p = 0;
-    for (byte y = 2; y <= 25; y++) {
-        for (byte x = 2; x <= 39; x++) {
-            cprintChar(x, y, cerberus_image[p++]);
-        }
-    }
     cprintStatus(1);
     /** Play a little jingle while keyboard finishes initializing ... no don't **/
-    // playJingle();
+    playJingle();
     // delay(1000);
     cprintStatus(0);
     cprintEditLine();
@@ -114,70 +158,202 @@ static void catbios_sync() {
     if (pendingKey) {
             ascii = pendingKey;                                             /** Read key pressed **/
             pendingKey = 0;
-    //      tone(SOUND, 750, 5);                                            /** Clicking sound for auditive feedback to key presses **/
+	    // tone(SOUND, 750, 5);                                            /** Clicking sound for auditive feedback to key presses **/
             if (!cpurunning) cprintStatus(0);                               /** Update status bar **/
-            switch(ascii) {
-                case PS2_ESC:
-                    if (cpurunning) {
-                        cpurunning = 0;
-                        resetCPUs();                    
-                        ccls();
-                        cprintFrames(); 
-                        cprintStatus(0); 
-                        clearEditLine(); 
-                    }
-                    break;
+	    if (cpurunning) {
+	      if (ascii == PS2_F12) {
+		cpurunning = 0;
+		resetCPUs();                    
+		ccls();
+		load((char *)"chardefs.bin",(char *)"f000",true);
+		cprintFrames(); 
+		cprintStatus(0); 
+		cprintBanner();
+		clearEditLine(); 		
+	      } else {
+		cpoke(0x0201, ascii); /** Put token code of pressed key in the CPU's mailbox, at 0x0201 **/
+		cpoke(0x0200, 0x01); /** Flag that there is new mail for the CPU waiting at the mailbox **/
+	      }
+	    } else {
+	      switch(ascii) {
+	      case PS2_PAGEDOWN:
+	      case PS2_PAGEUP:
+	      case PS2_RIGHTARROW:
+	      case PS2_ESC:
+		break;
+		
+	      case PS2_UPARROW:
+		for (i = 0; i < 38; i++) editLine[i] = previousEditLine[i];
+		i = 0;
+		while (editLine[i] != 0) i++;
+		pos = i;
+		cprintEditLine();
+		break;
 
-                case PS2_PAGEDOWN:
-                case PS2_PAGEUP:
-                case PS2_RIGHTARROW:
-                    break;
-
-                case PS2_UPARROW:
-                    if (!cpurunning) {
-                        for (i = 0; i < 38; i++) editLine[i] = previousEditLine[i];
-                        i = 0;
-                        while (editLine[i] != 0) i++;
-                        pos = i;
-                        cprintEditLine();
-                    }
-                    break;
-
-                case PS2_DOWNARROW:
-                    if (!cpurunning) clearEditLine();
-                    break;
-
-                case PS2_LEFTARROW:
-                case PS2_DELETE:
-                    if (!cpurunning) {
-                        editLine[pos] = 32; /** Put an empty space in current cursor position **/
-                        if (pos > 1) pos--; /** Update cursor position, unless reached left-most position already **/
-                        editLine[pos] = 0; /** Put cursor on updated position **/
-                        cprintEditLine(); /** Print the updated edit line **/
-                    }
-                    break;
-
-                default:
-                    if (!cpurunning) {
-                        if (ascii == PS2_ENTER) {
-                            enter();
-                        } else {
-                            /** If a CPU is not running... **/
-                            editLine[pos] = ascii; /** Put new character in current cursor position **/
-                            if (pos < 37) pos++; /** Update cursor position **/
-                            editLine[pos] = 0; /** Place cursor to the right of new character **/
-                            cprintEditLine(); /** Print the updated edit line **/
-                        }
-                    } else {                        
-                        /** Now, if a CPU is running... **/
-                        cpoke(0x0201, ascii); /** Put token code of pressed key in the CPU's mailbox, at 0x0201 **/
-                        cpoke(0x0200, 0x01); /** Flag that there is new mail for the CPU waiting at the mailbox **/
-                        CPUInterrupt();
-                    }
-                    break;
-                }
-        }
+	      case PS2_DOWNARROW:
+		clearEditLine();
+		break;
+		
+	      case PS2_LEFTARROW:
+	      case PS2_DELETE:
+		editLine[pos] = 32; /** Put an empty space in current cursor position **/
+		if (pos > 1) pos--; /** Update cursor position, unless reached left-most position already **/
+		editLine[pos] = 0; /** Put cursor on updated position **/
+		cprintEditLine(); /** Print the updated edit line **/
+		break;
+	      case PS2_ENTER:
+		enter();
+		break;
+	      default:
+		/** If a CPU is not running... **/
+		editLine[pos] = ascii; /** Put new character in current cursor position **/
+		if (pos < 37) pos++; /** Update cursor position **/
+		editLine[pos] = 0; /** Place cursor to the right of new character **/
+		cprintEditLine(); /** Print the updated edit line **/
+		
+	      }
+	    }
+    } else {
+      ascii = 0;
+    }
+    if (cpurunning) {
+      messageHandler();
+      CPUInterrupt();      
+    }   
 }
+
+
+// Inbox message handler
+//
+void messageHandler(void) {
+  	int	flag, status;
+  	byte retVal = 0x00;							// Return status; default is OK
+  	unsigned int address;						// Pointer for data
+
+ 	if(cpurunning) {							// Only run this code if cpu is running 
+	 	cpurunning = false;						// Just to prevent interrupts from happening
+		flag = cpeek(config_inbox_flag);		// Fetch the inbox flag 
+		if(flag > 0 && flag < 0x80) {
+			address = cpeekW(config_inbox_data);
+			switch(flag) {
+				case 0x01:
+					cmdSound(address);
+					break;
+				case 0x02: 
+					status = cmdLoad(address);
+					if(status != STATUS_READY) {
+						retVal = (byte)(status + 0x80);
+					}
+					break;
+				case 0x03:
+					status = cmdSave(address);
+					if(status != STATUS_READY) {
+						retVal = (byte)(status + 0x80);
+					}
+					break;
+				case 0x04:
+					status = cmdDelFile(address);
+					if(status != STATUS_READY) {
+						retVal = (byte)(status + 0x80);
+					}
+					break;
+				case 0x05:
+					status = cmdCatOpen(address);
+					if(status != STATUS_READY) {
+						retVal = (byte)(status + 0x80);
+					}
+					break;
+				case 0x06:
+					status = cmdCatEntry(address);
+					if(status != STATUS_READY) {
+						retVal = (byte)(status + 0x80);
+					}
+					break;
+				case 0x7F:
+				  //resetFunc();
+					break;
+			}
+			cpoke(config_inbox_flag, retVal);	// Flag we're done - values >= 0x80 are error codes
+		}
+		cpurunning = true;
+ 	}
+}
+
+// Handle SOUND command from BASIC
+//
+void cmdSound(unsigned int address) {
+	unsigned int frequency = cpeekW(address);
+	unsigned int duration = cpeekW(address + 2) * 50;
+	tone(SOUND, frequency, duration);
+	//delay(duration);
+}
+
+// Handle ERASE command from BASIC
+//
+int cmdDelFile(unsigned int address) {
+       cpeekStr(address, (char*)editLine, 38);
+       delFile((char *)editLine);
+       return STATUS_READY;
+}
+
+// Handle LOAD command from BASIC
+//
+int cmdLoad(unsigned int address) {
+	unsigned int startAddr = cpeekW(address);
+	unsigned int length = cpeekW(address + 2);
+	cpeekStr(address + 4, (char*)editLine, 38);
+	if (HWXLoadFile((char *)editLine, CPUMemoryAddress(startAddr),&length)) {
+	  return STATUS_NO_FILE;
+	} else {
+	  cpokeW(address+2, length);
+	  return STATUS_READY;
+	}
+	  
+}
+
+// Handle SAVE command from BASIC
+//
+int cmdSave(unsigned int address) {
+	unsigned int startAddr = cpeekW(address);
+	unsigned int length = cpeekW(address + 2);
+	cpeekStr(address + 4, (char*)editLine, 38);
+	if (HWXSaveFile((char *)editLine, CPUMemoryAddress(startAddr), length)) {
+	  return STATUS_NO_FILE;
+	} else {
+	  return STATUS_READY;
+	}
+}
+
+// Handle CAT command from BASIC
+//
+int cmdCatOpen(unsigned int address) {
+  HWXLoadDirectoryStart();
+  return STATUS_READY;
+}
+
+int cmdCatEntry(unsigned int address) {		// Subsequent calls to this will read the directory entries
+  BYTE8 fileName[128];
+  unsigned int fileLen;
+  HWXLoadDirectoryEntry(fileName, &fileLen);
+  if (*fileName==0) {
+    return STATUS_EOF;
+  }
+  cpokeL(address, fileLen); // *Just put something in, not real file size.
+  cpokeStr(address + 4, (char*)fileName);
+#if 0  
+	File entry;
+	entry = cd.openNextFile();				// Open the next file
+	if(!entry) {							// If we've read past the last file in the directory
+		cd.close();							// Then close the directory
+		return STATUS_EOF;					// And return end of file
+	}
+	cpokeL(address, entry.size());			// First four bytes are the length
+	cpokeStr(address + 4, entry.name());	// Followed by the filename, zero terminated
+	entry.close();							// Close the directory entry
+#endif	
+	return STATUS_READY;					// Return READY
+}
+
 
 /************************************************************************************************/
 static void enter() {
@@ -192,7 +368,7 @@ static void enter() {
         if (addr >= 0) {
             do 
             {
-                nextNextWord = getNextWord(false);
+                nextNextWord = getNextWord(false);		
                 data = strToHex(nextNextWord);
                 if (data >= 0) {
                     cpoke(addr & 0xFFFF,data & 0xFF);
@@ -204,7 +380,7 @@ static void enter() {
     }
 
         /** LIST ***********************************************************************************/
-    if (strcmp(nextWord,"list") == 0) {
+    else if (strcmp(nextWord,"list") == 0) {
         /** Lists contents of memory in compact format **/
         cls();
         nextWord = getNextWord(false); /** Get address **/
@@ -270,6 +446,14 @@ static void enter() {
         for (i = 0; i < 38; i++) previousEditLine[i] = editLine[i]; /** Store edit line just executed **/
         runCode();
         /** SAVE **********************************************************************************/
+    } else if (strcmp(nextWord,"basic6502") == 0) {
+      mode = 0;
+      HWXLoadFile("basic65.bin",CPUMemoryAddress(0x205),NULL);
+      runCode();
+    } else if (strcmp(nextWord,"basicz80") == 0) {
+      mode = 1;
+      HWXLoadFile("basicz80.bin",CPUMemoryAddress(0x205),NULL);
+      runCode();
     } else if (strcmp(nextWord,"save") == 0) {
         nextWord = getNextWord(false); /** Get start address **/
         nextNextWord = getNextWord(false);
@@ -325,28 +509,28 @@ static int strToHex(char *s) {
 
 static void help() {
     cls();
-    cprintString(3, 2, F("The Byte Attic's CERBERUS 2080 (tm)"));
-    cprintString(3, 3, F("        AVAILABLE COMMANDS:"));
-    cprintString(3, 4, F(" (All numbers must be hexadecimal)"));
-    cprintString(3, 6, F("0xADDR BYTE: Writes BYTE at ADDR"));
-    cprintString(3, 7, F("list ADDR: Lists memory from ADDR"));
-    cprintString(3, 8, F("cls: Clears the screen"));
-    cprintString(3, 9, F("testmem: Reads/writes to memories"));
-    cprintString(3, 10, F("6502: Switches to 6502 CPU mode"));
-    cprintString(3, 11, F("z80: Switches to Z80 CPU mode"));
-    cprintString(3, 12, F("fast: Switches to 8MHz mode"));
-    cprintString(3, 13, F("slow: Switches to 4MHz mode"));
-    cprintString(3, 14, F("reset: Resets the system"));
-    cprintString(3, 15, F("dir: Lists files on uSD card"));
-    cprintString(3, 16, F("del FILE: Deletes FILE"));
-    cprintString(3, 17, F("load FILE ADDR: Loads FILE at ADDR"));
-    cprintString(3, 18, F("save ADDR1 ADDR2 FILE: Saves memory"));
-    cprintString(5, 19, F("from ADDR1 to ADDR2 to FILE"));
-    cprintString(3, 20, F("run: Executes code in memory"));
-    cprintString(3, 21, F("move ADDR1 ADDR2 ADDR3: Moves bytes"));
-    cprintString(5, 22, F("between ADDR1 & ADDR2 to ADDR3 on"));
-    cprintString(3, 23, F("help / ?: Shows this help screen"));
-    cprintString(3, 24, F("ESC key: Quits CPU program"));
+  cprintString(3, 2,  F("The Byte Attic's CERBERUS 2100 (tm)"));
+  cprintString(3, 3,  F("        AVAILABLE COMMANDS:"));
+  cprintString(3, 4,  F(" (All numbers must be hexadecimal)"));
+  cprintString(3, 6,  F("0xADDR BYTE: Writes BYTE at ADDR"));
+  cprintString(3, 7,  F("list ADDR: Lists memory from ADDR"));
+  cprintString(3, 8,  F("cls: Clears the screen"));
+  cprintString(3, 9,  F("testmem: Reads/writes to memories"));
+  cprintString(3, 10, F("6502: Switches to 6502 CPU mode"));
+  cprintString(3, 11, F("z80: Switches to Z80 CPU mode"));
+  cprintString(3, 12, F("fast: Switches to 8MHz mode"));
+  cprintString(3, 13, F("slow: Switches to 4MHz mode"));
+  cprintString(3, 14, F("reset: Resets the system"));
+  cprintString(3, 15, F("dir: Lists files on uSD card"));
+  cprintString(3, 16, F("del FILE: Deletes FILE"));
+  cprintString(3, 17, F("load FILE ADDR: Loads FILE at ADDR"));
+  cprintString(3, 18, F("save ADDR1 ADDR2 FILE: Saves memory"));
+  cprintString(5, 19, F("from ADDR1 to ADDR2 to FILE"));
+  cprintString(3, 20, F("run: Executes code in memory"));
+  cprintString(3, 21, F("move ADDR1 ADDR2 ADDR3: Moves bytes"));
+  cprintString(5, 22, F("between ADDR1 & ADDR2 to ADDR3 on"));
+  cprintString(3, 23, F("help / ?: Shows this help screen"));
+  cprintString(3, 24, F("F12 key: Quits CPU program"));
 }
 
 static void binMove(char *startAddr, char *endAddr, char *destAddr) {
@@ -395,6 +579,8 @@ static void runCode() {
     /** Byte at 0x0201 is the mail box      **/
     cpoke(0x0200, 0x00); /** Reset mail flag **/
     cpoke(0x0201, 0x00); /** Reset mailbox **/
+    cpoke(0x0202, 0x00); /** Reset mail flag **/
+    cpoke(0x0203, 0x00); /** Reset mailbox **/
     if (!mode) {
         /** We are in 6502 mode **/
         /** Non-maskable interrupt vector points to 0xFCB0, just after video area **/
@@ -404,7 +590,7 @@ static void runCode() {
         // FCB0        RTI             40
         cpoke(0xFCB0, 0x40);
         /** Set reset vector to 0x0202, the beginning of the code area **/
-        cpoke(0xFFFC, 0x02);
+        cpoke(0xFFFC, 0x05);
         cpoke(0xFFFD, 0x02);
     } else {
         /** We are in Z80 mode **/
@@ -416,7 +602,7 @@ static void runCode() {
         /** The Z80 fetches the first instruction from 0x0000, so put a jump to the code area there **/
         // 0000   C3 00 01               JP   $0202
         cpoke(0x0000, 0xC3);
-        cpoke(0x0001, 0x02);
+        cpoke(0x0001, 0x05);
         cpoke(0x0002, 0x02);
     }
     cpurunning = true;
@@ -428,16 +614,34 @@ static BYTE8 dirBuffer[8192];
 
 static void dir() {
     int y = 2;
-    HWXLoadDirectory(dirBuffer);
-    BYTE8 *p = dirBuffer;
+    BYTE8 fileName[128];
+    BYTE8 *p;
+    unsigned int fileLen;
+    SDL_Event event;
+    HWXLoadDirectoryStart();
     cls();
-    while (*p != '\0') {
+    for (;;) {
         int x = 3;
-        while (*p != '\0') {
-            cprintChar(x++,y,*p++);
-        }
-        y++;
-        p++;
+	HWXLoadDirectoryEntry(fileName,&fileLen);
+	p=fileName;
+	if (*p==0)
+	  break;
+	cprintString(3,y,(char*)fileName);
+	sprintf((char*)fileName,"%d",fileLen);
+	cprintString(20,y,(char*)fileName);	
+        if(y < 24) {
+	  y++;
+	} else {
+	  cprintStatus(7);            /** End of screen has been */
+	  for (x = 2; x < 40; x++) cprintChar(x, 29, ' '); /** Hide editline while waiting for key press **/
+	  /* TODO wait for a keypress */
+	  if (pendingKey == 27) {
+	    break;
+	  } else {
+	    cls();
+	    y = 2;
+	  }
+	}
     }
     cprintStatus(2);
 }
@@ -553,6 +757,20 @@ static void cprintFrames() {
     }
 }
 
+void cprintBanner() {
+  /** Load the CERBERUS icon image on the screen ************/
+  BYTE8 iconbuf[1200];
+  HWXLoadFile("cerbicon.img",iconbuf,NULL);
+  int inChar;
+  BYTE8 *p = iconbuf;
+  for (byte y = 3; y <= 25; y++) {
+    for (byte x = 2; x <= 39; x++) {
+      inChar = *p++;	      
+	  cprintChar(x, y, inChar);
+    }       		}
+}
+
+
 static void cprintString(byte x, byte y, char *text) {
     unsigned int i = 0;
     while (text[i] != 0) {
@@ -601,6 +819,7 @@ static void delFile(char *filename) {
     //     SD.remove(filename); /** Delete the file **/
     //     cprintStatus(2);
     //}
+  HWXDeleteFile(filename);
 }
 
 static void save(char *startAddr, char *endAddr, char *filename) {
@@ -617,7 +836,7 @@ static void save(char *startAddr, char *endAddr, char *filename) {
 
 static void load(char *filename, char *address, bool silent) {
     int addr = strToHex(address);
-    if (HWXLoadFile(filename,CPUMemoryAddress(addr < 0 ? 0x202:addr))) {
+    if (HWXLoadFile(filename,CPUMemoryAddress(addr < 0 ? 0x205:addr),NULL)) {
         if (!silent) cprintStatus(5);
     }
 }
@@ -634,4 +853,40 @@ static void updateProcessorState() {
     CPUSetZ80(mode);
     CPUEnable(cpurunning);                   
     CPUSetClock(fast ? 8 : 4);
+}
+
+static void cpokeW(unsigned int address, unsigned int data) {
+	cpoke(address, data & 0xFF);
+	cpoke(address + 1, (data >> 8) & 0xFF);
+}
+
+static void cpokeL(unsigned int address, unsigned long data) {
+	cpoke(address, data & 0xFF);
+	cpoke(address + 1, (data >> 8) & 0xFF);
+	cpoke(address + 2, (data >> 16) & 0xFF);
+	cpoke(address + 3, (data >> 24) & 0xFF);
+}
+
+static bool cpokeStr(unsigned int address, char *text) {
+	unsigned int i;
+	for(i = 0; i < strlen(text); i++) {
+		cpoke(address + i, text[i]);
+	}
+	cpoke(address + i, 0);
+	return true;
+}
+
+static unsigned int cpeekW(unsigned int address) {
+	return cpeek(address) + (256 * cpeek(address+1));
+}
+
+static bool cpeekStr(unsigned int address, char * dest, int max) {
+	unsigned int i;
+	byte c;
+	for(i = 0; i < max; i++) {
+		c = cpeek(address + i);
+		dest[i] = c;
+		if(c == 0) return true;
+	}
+	return false;
 }

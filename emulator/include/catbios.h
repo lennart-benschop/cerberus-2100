@@ -700,7 +700,7 @@ static void cprintStatus(byte status) {
         cprintString(2, 27, F("   Feel the power of Dutch design!!   "));
         break;
     default:
-        cprintString(2, 27, F("      CERBERUS 2080: "));
+        cprintString(2, 27, F("      CERBERUS 2100: "));
         if (mode) cprintString(23, 27, F(" Z80, "));
         else cprintString(23, 27, F("6502, "));
         if (fast) cprintString(29, 27, F("8 MHz"));
@@ -752,8 +752,8 @@ static void cprintFrames() {
     }
     /** Now print vertical bars **/
     for (y = 1; y <= 30; y++) {
-        cprintChar(1, y, 133);
-        cprintChar(40, y, 5);
+        cprintChar(1, y, 160);
+        cprintChar(40, y, 160);
     }
 }
 
